@@ -1,0 +1,30 @@
+grammar gr;
+#INITIAL GRAMMAR PARSED IN ANTLR
+DIGIT:[0-9];
+LETTER:[a-z]|[A-Z];
+WS: [ \t\n\r]+ -> skip;
+EQ:'=';
+COMMA:',';
+LPAREN:'(';
+RPAREN:')';
+POW:'^';
+PLUSMINUS:'+'|'-';
+MULDIV:'*'|'/';
+RELOP:'=='|'<='|'>='|'<'|'>';
+VAR:'VAR';
+COMPARE:'AND'|'OR';
+NEGATION:'NOT';
+number:DIGIT+;
+identifier:LETTER+;
+call:atom+;
+atom: variableDECL|expr|ifexpr|function;
+variableDECL:VAR identifier EQ expr;
+expr:compexpr|arithexpr|number;
+compexpr: arithexpr RELOP arithexpr|arithexpr RELOP number|
+compexpr COMPARE compexpr| NEGATION compexpr;
+arithexpr: term (PLUSMINUS term)*| arithexpr PLUSMINUS term|LPAREN arithexpr RPAREN;
+term:factor (MULDIV factor)* |term MULDIV factor|factor|LPAREN term RPAREN;
+factor:number|power|identifier;
+power: number POW number|identifier POW number ;
+ifexpr:'IF'expr 'THEN' expr ('ELSE' expr)?;
+function: 'FUN' identifier LPAREN(identifier(COMMA identifier)*) RPAREN '->' expr;
