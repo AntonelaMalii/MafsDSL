@@ -296,12 +296,12 @@ class UnaryOpNode:
 
 
 class IfNode:
-    def __init__(self, cases, else_case):
-        self.cases = cases
+    def __init__(self, case, else_case):
+        self.case = case
         self.else_case = else_case
 
-        self.pos_start = self.cases[0][0].pos_start
-        self.pos_end = (self.else_case or self.cases[len(self.cases) - 1][0]).pos_end
+        self.pos_start = self.case[0][0].pos_start
+        self.pos_end = (self.else_case or self.case[len(self.case) - 1][0]).pos_end
 
 
 class FuncDefNode:
@@ -554,10 +554,9 @@ class Parser:
             "Expected int, float, identifier, '+', '-', '(', 'IF','FUN'"
         ))
 
-    # trebuie de schimbat pentru cazul else err
     def if_expr(self):
         res = ParseResult()
-        cases = []
+        case = []
         else_case = None
 
         if not self.current_tok.matches(TT_KEYWORD, 'IF'):
@@ -583,7 +582,7 @@ class Parser:
 
         expr = res.register(self.expr())
         if res.error: return res
-        cases.append((condition, expr))
+        case.append((condition, expr))
 
         if self.current_tok.matches(TT_KEYWORD, 'ELSE'):
             res.register_advancement()
@@ -592,7 +591,7 @@ class Parser:
             else_case = res.register(self.expr())
             if res.error: return res
 
-        return res.success(IfNode(cases, else_case))
+        return res.success(IfNode(case, else_case))
 
     def func_def(self):
         res = ParseResult()
@@ -1080,7 +1079,7 @@ class Interpreter:
     def visit_IfNode(self, node, context):
         res = RTResult()
 
-        for condition, expr in node.cases:
+        for condition, expr in node.case:
             condition_value = res.register(self.visit(condition, context))
             if res.error: return res
 
