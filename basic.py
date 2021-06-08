@@ -1,6 +1,16 @@
 # IMPORTS
 from errors import *
 import string
+import math
+from sympy import *
+from sympy.abc import *
+from sympy.solvers import solve
+from sympy.interactive import printing
+printing.init_printing(use_latex=True)
+
+import sympy as sp
+import numpy as np
+
 
 # CONSTANTS
 
@@ -8,11 +18,11 @@ DIGITS = '0123456789'
 LETTERS = string.ascii_letters
 LETTERS_DIGITS = LETTERS + DIGITS
 
-
 # TOKENS
 
 TT_INT = 'INT'
 TT_FLOAT = 'FLOAT'
+TT_STRING = 'STRING'
 TT_IDENTIFIER = 'IDENTIFIER'
 TT_KEYWORD = 'KEYWORD'
 TT_PLUS = 'PLUS'
@@ -65,6 +75,7 @@ class Token:
         if self.value: return f'{self.type}:{self.value}'
         return f'{self.type}'
 
+
 # POSITION
 
 class Position:
@@ -89,7 +100,6 @@ class Position:
         return Position(self.idx, self.ln, self.col, self.fn, self.ftxt)
 
 
-
 # LEXER
 
 class Lexer:
@@ -112,6 +122,8 @@ class Lexer:
                 self.advance()
             elif self.current_char in DIGITS:
                 tokens.append(self.make_number())
+            elif self.current_char == '"':
+                tokens.append(self.make_string())
             elif self.current_char in LETTERS:
                 tokens.append(self.make_identifier())
             elif self.current_char == '+':
@@ -172,6 +184,19 @@ class Lexer:
             return Token(TT_INT, int(num_str), pos_start, self.pos)
         else:
             return Token(TT_FLOAT, float(num_str), pos_start, self.pos)
+
+    def make_string(self):
+        string = ''
+        pos_start = self.pos.copy()
+        escape_character = False
+        self.advance()
+
+        while self.current_char != None and (self.current_char != '"' or escape_character):
+            string += self.current_char
+            self.advance()
+
+        self.advance()
+        return Token(TT_STRING, string, pos_start, self.pos)
 
     def make_identifier(self):
         id_str = ''
@@ -243,6 +268,17 @@ class Lexer:
 # NODES
 
 class NumberNode:
+    def __init__(self, tok):
+        self.tok = tok
+
+        self.pos_start = self.tok.pos_start
+        self.pos_end = self.tok.pos_end
+
+    def __repr__(self):
+        return f'{self.tok}'
+
+
+class StringNode:
     def __init__(self, tok):
         self.tok = tok
 
@@ -518,6 +554,11 @@ class Parser:
             self.advance()
             return res.success(NumberNode(tok))
 
+        if tok.type == TT_STRING:
+            res.register_advancement()
+            self.advance()
+            return res.success(StringNode(tok))
+
         elif tok.type == TT_IDENTIFIER:
             res.register_advancement()
             self.advance()
@@ -774,7 +815,7 @@ class Value:
     def ored_by(self, other):
         return None, self.illegal_operation(other)
 
-    def notted(self):
+    def notted(self, other):
         return None, self.illegal_operation(other)
 
     def execute(self, args):
@@ -901,40 +942,86 @@ class Number(Value):
         return str(self.value)
 
 
-class Function(Value):
-    def __init__(self, name, body_node, arg_names):
+Number.null = Number(0)
+Number.false = Number(0)
+Number.true = Number(1)
+Number.math_PI = Number(math.pi)
+
+
+class BaseFunction(Value):
+    def __init__(self, name):
         super().__init__()
         self.name = name or "<anonymous>"
+
+    def generate_new_context(self):
+        new_context = Context(self.name, self.context, self.pos_start)
+        new_context.symbol_table = SymbolTable(new_context.parent.symbol_table)
+        return new_context
+
+    def check_args(self, arg_names, args):
+        res = RTResult()
+
+        if len(args) > len(arg_names):
+            return res.failure(RTError(
+                self.pos_start, self.pos_end,
+                f"{len(args) - len(arg_names)} too many args passed into '{self.name}'",
+                self.context
+            ))
+
+        if len(args) < len(arg_names):
+            return res.failure(RTError(
+                self.pos_start, self.pos_end,
+                f"{len(arg_names) - len(args)} too few args passed into '{self.name}'",
+                self.context
+            ))
+
+        return res.success(None)
+
+    def populate_args(self, arg_names, args, exec_ctx):
+        for i in range(len(args)):
+            arg_name = arg_names[i]
+            arg_value = args[i]
+            arg_value.set_context(exec_ctx)
+            exec_ctx.symbol_table.set(arg_name, arg_value)
+
+    def check_and_populate_args(self, arg_names, args, exec_ctx):
+        res = RTResult()
+        res.register(self.check_args(arg_names, args))
+        if res.error: return res
+        self.populate_args(arg_names, args, exec_ctx)
+        return res.success(None)
+
+
+class String(Value):
+    def __init__(self, value):
+        super().__init__()
+        self.value = value
+
+    def copy(self):
+        copy = String(self.value)
+        copy.set_pos(self.pos_start, self.pos_end)
+        copy.set_context(self.context)
+        return copy
+
+    def __repr__(self):
+        return f'"{self.value}"'
+
+
+class Function(BaseFunction):
+    def __init__(self, name, body_node, arg_names):
+        super().__init__(name)
         self.body_node = body_node
         self.arg_names = arg_names
 
     def execute(self, args):
         res = RTResult()
         interpreter = Interpreter()
-        new_context = Context(self.name, self.context, self.pos_start)
-        new_context.symbol_table = SymbolTable(new_context.parent.symbol_table)
+        exec_ctx = self.generate_new_context()
 
-        if len(args) > len(self.arg_names):
-            return res.failure(RTError(
-                self.pos_start, self.pos_end,
-                f"{len(args) - len(self.arg_names)} too many args passed into '{self.name}'",
-                self.context
-            ))
+        res.register(self.check_and_populate_args(self.arg_names, args, exec_ctx))
+        if res.error: return res
 
-        if len(args) < len(self.arg_names):
-            return res.failure(RTError(
-                self.pos_start, self.pos_end,
-                f"{len(self.arg_names) - len(args)} too few args passed into '{self.name}'",
-                self.context
-            ))
-
-        for i in range(len(args)):
-            arg_name = self.arg_names[i]
-            arg_value = args[i]
-            arg_value.set_context(new_context)
-            new_context.symbol_table.set(arg_name, arg_value)
-
-        value = res.register(interpreter.visit(self.body_node, new_context))
+        value = res.register(interpreter.visit(self.body_node, exec_ctx))
         if res.error: return res
         return res.success(value)
 
@@ -946,6 +1033,102 @@ class Function(Value):
 
     def __repr__(self):
         return f"<function {self.name}>"
+
+
+class BuiltInFunction(BaseFunction):
+    def __init__(self, name):
+        super().__init__(name)
+
+    def execute(self, args):
+        res = RTResult()
+        exec_ctx = self.generate_new_context()
+
+        method_name = f'execute_{self.name}'
+        method = getattr(self, method_name, self.no_visit_method)
+
+        res.register(self.check_and_populate_args(method.arg_names, args, exec_ctx))
+        if res.error: return res
+
+        return_value = res.register(method(exec_ctx))
+        if res.error: return res
+        return res.success(return_value)
+
+    def no_visit_method(self, node, context):
+        raise Exception(f'No execute_{self.name} method defined')
+
+    def copy(self):
+        copy = BuiltInFunction(self.name)
+        copy.set_context(self.context)
+        copy.set_pos(self.pos_start, self.pos_end)
+        return copy
+
+    def __repr__(self):
+        return f"<built-in function {self.name}>"
+
+    ###########################
+
+    def execute_equation(self, exec_ctx):
+        equ = str(exec_ctx.symbol_table.get('value'))
+        
+        equ = equ.replace('"', '')
+        equ = equ.replace('=', '-') 
+       
+        F = eval(equ)
+        print("\nThe equation to be solved:\n ")
+        eq = Eq(F,0)
+        display(eq)
+        print("\nThe solution:\n ")
+        display(solve(F))
+        
+        return RTResult().success(Number.null)
+
+    execute_equation.arg_names = ['value']
+    
+    def execute_sys_equation(self, exec_ctx):
+        equ = str(exec_ctx.symbol_table.get('value'))
+        
+        equ = equ.replace('"', '')
+        equ = equ.replace('=', '-') 
+        
+        spl = equ.split(',')
+        sset = set()
+        
+        print("\nThe equations of the system:\n ")
+        for elem in spl:
+            sset.add(eval(elem))
+            display(Eq(eval(elem),0))
+
+        print("\nThe possible solutions:\n ")
+        display(solve_poly_system(sset))
+        
+        return RTResult().success(Number.null)
+
+    execute_sys_equation.arg_names = ['value']
+    
+    def execute_integral(self, exec_ctx):
+        equ = str(exec_ctx.symbol_table.get('value'))
+        
+        equ = equ.replace('"', '')
+        equ = equ.replace('=', '-') 
+        
+        func = sp.Function('func')
+        func = eval(equ)
+        
+        print("\nThe integral to be evaluated:\n")
+        display(sp.Integral(func))
+        
+        print("\nThe result of evaluation:\n")
+        display(sp.integrate(func))
+        
+        return RTResult().success(Number.null)
+
+    execute_integral.arg_names = ['value']
+
+
+
+BuiltInFunction.equation = BuiltInFunction("equation")
+BuiltInFunction.sys_equation = BuiltInFunction("sys_equation")
+BuiltInFunction.integral = BuiltInFunction("integral")
 
 
 # CONTEXT
@@ -997,6 +1180,11 @@ class Interpreter:
             Number(node.tok.value).set_context(context).set_pos(node.pos_start, node.pos_end)
         )
 
+    def visit_StringNode(self, node, context):
+        return RTResult().success(
+            String(node.tok.value).set_context(context).set_pos(node.pos_start, node.pos_end)
+        )
+
     def visit_VarAccessNode(self, node, context):
         res = RTResult()
         var_name = node.var_name_tok.value
@@ -1009,7 +1197,7 @@ class Interpreter:
                 context
             ))
 
-        value = value.copy().set_pos(node.pos_start, node.pos_end)
+        value = value.copy().set_pos(node.pos_start, node.pos_end).set_context(context)
         return res.success(value)
 
     def visit_VarAssignNode(self, node, context):
@@ -1124,15 +1312,20 @@ class Interpreter:
 
         return_value = res.register(value_to_call.execute(args))
         if res.error: return res
+        return_value = return_value.copy().set_pos(node.pos_start, node.pos_end).set_context(context)
         return res.success(return_value)
 
 
 # RUN
 
 global_symbol_table = SymbolTable()
-global_symbol_table.set("NULL", Number(0))
-global_symbol_table.set("FALSE", Number(0))
-global_symbol_table.set("TRUE", Number(1))
+global_symbol_table.set("NULL", Number.null)
+global_symbol_table.set("FALSE", Number.false)
+global_symbol_table.set("TRUE", Number.true)
+global_symbol_table.set("MATH_PI", Number.math_PI)
+global_symbol_table.set("EQUATION", BuiltInFunction.equation)
+global_symbol_table.set("SYS_EQUATION", BuiltInFunction.sys_equation)
+global_symbol_table.set("INTEGRAL", BuiltInFunction.integral)
 
 
 def run(fn, text):
@@ -1144,9 +1337,9 @@ def run(fn, text):
     # Generate AST
     parser = Parser(tokens)
     ast = parser.parse()
-    #if ast.error: return None, ast.error
+    # if ast.error: return None, ast.error
     # to see the parsing process
-    return ast.node, ast.error
+    if ast.error: return None, ast.error
 
     # Run program
     interpreter = Interpreter()
@@ -1154,4 +1347,4 @@ def run(fn, text):
     context.symbol_table = global_symbol_table
     result = interpreter.visit(ast.node, context)
 
-    #return result.value, result.error
+    return result.value, result.error

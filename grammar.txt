@@ -17,7 +17,7 @@ NEGATION:'NOT';
 number:DIGIT+;
 identifier:LETTER+;
 call:atom+;
-atom: variableDECL|expr|ifexpr|function;
+atom: variableDECL|expr|ifexpr|function|STRING;
 variableDECL:VAR identifier EQ expr;
 expr:compexpr|arithexpr|number;
 compexpr: arithexpr RELOP arithexpr|arithexpr RELOP number|
